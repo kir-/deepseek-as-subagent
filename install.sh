@@ -293,7 +293,7 @@ if [ "${NEED_KEY:-0}" = "1" ]; then
     fi
 else
     echo "立即试用:"
-    echo "  cd <你的项目目录> && claude"
+    echo "  cd <你的项目目录> && claude     # 已在运行的 claude 需要重启才能加载新 MCP"
     echo "  > /ds 写个 hello world 到 /tmp/hi.py     # 强制派 DeepSeek 干活"
     echo "  > 请调用 ping 工具                       # 验证 MCP 连接 + 看沙箱根"
     echo ""
