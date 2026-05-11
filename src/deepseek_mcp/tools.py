@@ -158,12 +158,14 @@ def _execute_bash(args: dict, workspace: Path) -> str:
         timeout = DEFAULT_BASH_TIMEOUT
     timeout = max(1, min(timeout, MAX_BASH_TIMEOUT))
 
+    # text=False + 手动 utf-8 解码：跨平台稳定（Windows cmd 输出 GBK 时用
+    # replace fallback 保留可读性，而不是抛 UnicodeDecodeError 让命令"失败"）
     try:
         result = subprocess.run(
             command,
             shell=True,
             capture_output=True,
-            text=True,
+            text=False,
             timeout=timeout,
             cwd=str(workspace),
         )
@@ -172,8 +174,8 @@ def _execute_bash(args: dict, workspace: Path) -> str:
     except Exception as e:
         return f"ERROR: failed to execute: {e}"
 
-    out = result.stdout or ""
-    err = result.stderr or ""
+    out = (result.stdout or b"").decode("utf-8", errors="replace")
+    err = (result.stderr or b"").decode("utf-8", errors="replace")
     combined = f"[exit {result.returncode}]\n--- stdout ---\n{out}"
     if err:
         combined += f"\n--- stderr ---\n{err}"

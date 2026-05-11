@@ -11,10 +11,16 @@
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import sys
 from pathlib import Path
+
+# Windows 上 asyncio 默认用 ProactorEventLoop，跟 stdio 子进程不兼容会卡死
+# 必须在 import FastMCP / 启动事件循环之前切到 SelectorEventLoopPolicy
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 from mcp.server.fastmcp import FastMCP
 
