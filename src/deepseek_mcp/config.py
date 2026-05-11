@@ -16,7 +16,7 @@ CONFIG_PATH = Path.home() / ".deepseek-mcp" / "config.json"
 
 DEFAULT_MODEL = "deepseek-v4-pro"  # 主力模型（推理强）；省钱场景改 deepseek-v4-flash
 DEFAULT_MAX_TURNS = 50
-DEFAULT_ALLOWED_TOOLS = ["Read", "Write", "Edit", "Bash", "Glob", "Grep"]
+DEFAULT_ALLOWED_TOOLS = ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "NotebookEdit"]
 
 logger = logging.getLogger(__name__)
 

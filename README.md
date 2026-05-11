@@ -11,7 +11,7 @@
          │  →  delegate_to_deepseek(task, context)
          ▼
        DeepSeek sub-agent (cheap, runs its own loop inside the workspace)
-         │  Read / Write / Edit / Bash / Glob / Grep — all local
+         │  Read / Write / Edit / Bash / Glob / Grep / NotebookEdit — all local
          │  iterates until done
          ▼
        Final message bubbles back to Claude
@@ -45,7 +45,7 @@ This project gives DeepSeek **its own full agent loop**: tool dispatch, file I/O
 
 - **MCP server** (Python, stdio transport) exposing one real tool: `delegate_to_deepseek(task, context)`
 - **Local agent loop** for DeepSeek (`agent_loop.py`) with OpenAI-compatible function calling
-- **6 sandboxed tools** for DeepSeek to use: Read / Write / Edit / Bash / Glob / Grep
+- **7 sandboxed tools** for DeepSeek to use: Read / Write / Edit / Bash / Glob / Grep / NotebookEdit (Jupyter cell-level editing)
 - **Path sandbox + command blacklist** (`safety.py`) — DeepSeek can't escape your workspace or run `rm -rf /`
 - **Skill + slash command** so Claude knows *when* to delegate (and when not to)
 - **`pure` shell alias** for one-shot "no DeepSeek today" runs
@@ -121,7 +121,7 @@ No third-party proxy. No cloud relay. Your code never leaves your laptop.
   "api_key": "sk-...",
   "model": "deepseek-v4-pro",
   "max_turns": 50,
-  "allowed_tools": ["Read", "Write", "Edit", "Bash", "Glob", "Grep"]
+  "allowed_tools": ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "NotebookEdit"]
 }
 ```
 

@@ -185,7 +185,7 @@ if [ ! -f "$CONFIG_FILE" ]; then
   "api_key": "$API_KEY",
   "model": "deepseek-v4-pro",
   "max_turns": 50,
-  "allowed_tools": ["Read", "Write", "Edit", "Bash", "Glob", "Grep"]
+  "allowed_tools": ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "NotebookEdit"]
 }
 EOF
     )

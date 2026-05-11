@@ -22,7 +22,7 @@ cat > ~/.deepseek-mcp/config.json <<'EOF'
   "api_key": "PASTE_YOUR_DEEPSEEK_KEY_HERE",
   "model": "deepseek-v4-pro",
   "max_turns": 50,
-  "allowed_tools": ["Read", "Write", "Edit", "Bash", "Glob", "Grep"]
+  "allowed_tools": ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "NotebookEdit"]
 }
 EOF
 chmod 600 ~/.deepseek-mcp/config.json

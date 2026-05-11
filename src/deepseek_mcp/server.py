@@ -92,7 +92,7 @@ def _shorten_path(p: Path) -> str:
 def delegate_to_deepseek(task: str, context: str = "") -> str:
     """Delegate a focused task to DeepSeek as a real sub-agent.
 
-    DeepSeek runs its own agent loop with Read/Write/Edit/Bash/Glob/Grep tools
+    DeepSeek runs its own agent loop with Read/Write/Edit/Bash/Glob/Grep/NotebookEdit tools
     inside the configured workspace. Use this for batch / repetitive / mechanical
     tasks where you want to save main-conversation tokens and let DeepSeek do the
     heavy lifting end-to-end.

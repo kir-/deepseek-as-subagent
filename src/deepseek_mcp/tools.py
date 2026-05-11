@@ -15,8 +15,10 @@ DeepSeek 调用时：
 from __future__ import annotations
 
 import glob as _glob
+import json
 import re
 import subprocess
+import uuid
 from pathlib import Path
 
 from .safety import SandboxViolation, check_command, resolve_safe_path
@@ -227,6 +229,140 @@ def _execute_glob(args: dict, workspace: Path) -> str:
     return summary + ":\n" + "\n".join(rel_matches)
 
 
+def _execute_notebook_edit(args: dict, workspace: Path) -> str:
+    """编辑 Jupyter notebook (.ipynb) 的单个 cell。
+
+    比 Read+Write 整个 ipynb 强得多 —— DS 只传"要改什么"，server 端
+    parse JSON、定位 cell、保留 cell_id / metadata / 其他 cells 的
+    outputs，不会因 DS 写错 JSON 把 notebook 弄坏。
+
+    args:
+        path: .ipynb 路径
+        edit_mode: "replace" | "insert" | "delete" (默认 replace)
+        cell_id: cell 标识（优先于 cell_index，跨编辑稳定）
+        cell_index: 0-indexed 位置（cell_id 没给时用）
+        new_source: 新源码（replace / insert 用）
+        cell_type: "code" | "markdown" (默认 code，只 insert 用)
+    """
+    path = args.get("path", "")
+    if not path:
+        return "ERROR: missing required 'path' argument"
+    if not path.endswith(".ipynb"):
+        return f"ERROR: not an .ipynb file: {path}"
+
+    edit_mode = args.get("edit_mode", "replace")
+    if edit_mode not in ("replace", "insert", "delete"):
+        return f"ERROR: invalid edit_mode '{edit_mode}' (must be replace/insert/delete)"
+
+    try:
+        abs_path = resolve_safe_path(path, workspace)
+    except SandboxViolation as e:
+        return f"ERROR: {e}"
+
+    # 读 notebook（或为 insert 创建骨架）
+    if abs_path.exists():
+        try:
+            nb = json.loads(abs_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as e:
+            return f"ERROR: failed to parse notebook JSON: {e}"
+        except Exception as e:
+            return f"ERROR: failed to read notebook: {e}"
+        if not isinstance(nb, dict) or not isinstance(nb.get("cells"), list):
+            return "ERROR: not a valid notebook (missing 'cells' array)"
+    elif edit_mode == "insert":
+        # 允许 insert 到不存在的 notebook（自动创建 nbformat 4.5 骨架）
+        nb = {
+            "cells": [],
+            "metadata": {
+                "kernelspec": {"display_name": "Python 3", "language": "python", "name": "python3"},
+                "language_info": {"name": "python"},
+            },
+            "nbformat": 4,
+            "nbformat_minor": 5,
+        }
+    else:
+        return f"ERROR: notebook not found: {path}"
+
+    cells = nb["cells"]
+
+    # 定位目标 cell
+    cell_id = args.get("cell_id")
+    cell_index = args.get("cell_index")
+    target_index = None
+
+    if cell_id is not None:
+        for i, c in enumerate(cells):
+            if isinstance(c, dict) and c.get("id") == cell_id:
+                target_index = i
+                break
+        if target_index is None and edit_mode != "insert":
+            return f"ERROR: cell_id '{cell_id}' not found in {path}"
+    elif cell_index is not None:
+        try:
+            cell_index = int(cell_index)
+        except (TypeError, ValueError):
+            return f"ERROR: invalid cell_index '{cell_index}'"
+        if 0 <= cell_index < len(cells):
+            target_index = cell_index
+        elif edit_mode != "insert":
+            return f"ERROR: cell_index {cell_index} out of range (0..{len(cells) - 1})"
+    elif edit_mode != "insert":
+        return "ERROR: replace/delete require cell_id or cell_index"
+
+    # 执行编辑
+    new_source = args.get("new_source", "")
+    if not isinstance(new_source, str):
+        return "ERROR: 'new_source' must be a string"
+
+    def _split_source(s: str) -> list[str]:
+        # nbformat 期望 source 是 list[str]，每项末尾保留换行（除最后一行）
+        if not s:
+            return [""]
+        lines = s.splitlines(keepends=True)
+        return lines if lines else [""]
+
+    if edit_mode == "replace":
+        cell = cells[target_index]
+        cell["source"] = _split_source(new_source)
+        if cell.get("cell_type") == "code":
+            # 改了源码，原 outputs 不再代表此 source 的输出 —— 清掉
+            cell["outputs"] = []
+            cell["execution_count"] = None
+        result_msg = f"OK: replaced cell at index {target_index} (id={cell.get('id', 'n/a')})"
+    elif edit_mode == "insert":
+        cell_type = args.get("cell_type", "code")
+        if cell_type not in ("code", "markdown"):
+            return f"ERROR: invalid cell_type '{cell_type}' (must be code or markdown)"
+        new_cell: dict = {
+            "cell_type": cell_type,
+            "id": uuid.uuid4().hex[:8],
+            "source": _split_source(new_source),
+            "metadata": {},
+        }
+        if cell_type == "code":
+            new_cell["outputs"] = []
+            new_cell["execution_count"] = None
+        # 在 target_index 之后插入（没指定就追加到末尾）
+        insert_at = (target_index + 1) if target_index is not None else len(cells)
+        cells.insert(insert_at, new_cell)
+        result_msg = f"OK: inserted {cell_type} cell at index {insert_at} (id={new_cell['id']})"
+    else:  # delete
+        removed = cells.pop(target_index)
+        result_msg = f"OK: deleted cell at index {target_index} (was id={removed.get('id', 'n/a')})"
+
+    # 写回
+    try:
+        abs_path.parent.mkdir(parents=True, exist_ok=True)
+        abs_path.write_text(
+            json.dumps(nb, ensure_ascii=False, indent=1) + "\n",
+            encoding="utf-8",
+        )
+    except Exception as e:
+        return f"ERROR: failed to write notebook: {e}"
+
+    return result_msg + f" (total cells: {len(cells)})"
+
+
 def _execute_grep(args: dict, workspace: Path) -> str:
     """正则搜索文件内容。args: {pattern: str, path?: str, glob?: str, max_matches?: int}"""
     pattern = args.get("pattern", "")
@@ -291,6 +427,7 @@ TOOL_REGISTRY = {
     "Bash": _execute_bash,
     "Glob": _execute_glob,
     "Grep": _execute_grep,
+    "NotebookEdit": _execute_notebook_edit,
 }
 
 
@@ -383,6 +520,36 @@ def build_tool_schemas(allowed: list[str]) -> list[dict]:
                     "max_matches": {"type": "integer", "description": "Max matches to return (default 100, hard cap 1000)."},
                 },
                 "required": ["pattern"],
+            },
+        },
+        "NotebookEdit": {
+            "name": "NotebookEdit",
+            "description": (
+                "Edit a Jupyter notebook (.ipynb) cell-by-cell. Modes: 'replace' "
+                "(change a cell's source, clears outputs/execution_count), 'insert' "
+                "(add new cell after target, auto-generates cell id), 'delete' "
+                "(remove cell). Preserves nbformat schema, other cells' outputs, "
+                "and notebook metadata. Prefer over Read+Write for .ipynb files."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Path to .ipynb file relative to workspace."},
+                    "edit_mode": {
+                        "type": "string",
+                        "enum": ["replace", "insert", "delete"],
+                        "description": "Edit operation (default: replace).",
+                    },
+                    "cell_id": {"type": "string", "description": "Cell identifier (preferred over cell_index — stable across edits)."},
+                    "cell_index": {"type": "integer", "description": "0-indexed cell position (used if cell_id not provided)."},
+                    "new_source": {"type": "string", "description": "New cell source for replace/insert. Multi-line OK."},
+                    "cell_type": {
+                        "type": "string",
+                        "enum": ["code", "markdown"],
+                        "description": "Cell type for insert mode (default code).",
+                    },
+                },
+                "required": ["path", "edit_mode"],
             },
         },
     }

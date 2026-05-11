@@ -10,7 +10,7 @@ to use the `delegate_to_deepseek` MCP tool.
 
 You have access to an MCP tool `delegate_to_deepseek` (provided by the
 deepseek MCP server). It runs a full sub-agent loop inside a sandboxed
-workspace — DeepSeek does its own Read / Write / Edit / Bash / Glob / Grep
+workspace — DeepSeek does its own Read / Write / Edit / Bash / Glob / Grep / NotebookEdit
 and returns a final summary.
 
 ### Core principle: delegate by default
