@@ -36,13 +36,26 @@ class Config:
         # 这里只负责加载真实配置
         data: dict = {}
         if CONFIG_PATH.exists():
-            data = json.loads(CONFIG_PATH.read_text())
+            try:
+                data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+            except json.JSONDecodeError as e:
+                raise RuntimeError(
+                    f"Invalid JSON in {CONFIG_PATH} (line {e.lineno}, col {e.colno}): {e.msg}"
+                ) from e
+            if not isinstance(data, dict):
+                raise RuntimeError(f"Top-level of {CONFIG_PATH} must be a JSON object")
 
-        api_key = os.getenv("DEEPSEEK_API_KEY") or data.get("api_key", "")
+        # API key: env > config，strip 前后空白（粘贴常带）
+        api_key = (os.getenv("DEEPSEEK_API_KEY") or data.get("api_key", "")).strip()
         if not api_key or api_key == "PASTE_YOUR_DEEPSEEK_KEY_HERE":
             raise RuntimeError(
                 f"DeepSeek API key not configured. "
                 f"Set DEEPSEEK_API_KEY env var or edit {CONFIG_PATH}"
+            )
+        if not api_key.startswith("sk-"):
+            logger.warning(
+                "API key doesn't start with 'sk-' — DeepSeek may reject it. "
+                "Check that you copied the full key from platform.deepseek.com."
             )
 
         # workspace 解析：env > config > cwd
@@ -59,11 +72,25 @@ class Config:
         else:
             workspace = Path.cwd()  # 跟随 Claude Code 启动目录
 
+        # max_turns 必须 >= 1，否则 for-loop 不进，下游会拿到不一致状态
+        try:
+            max_turns = int(data.get("max_turns", DEFAULT_MAX_TURNS))
+        except (TypeError, ValueError):
+            max_turns = DEFAULT_MAX_TURNS
+        if max_turns < 1:
+            logger.warning("max_turns=%d invalid, using default %d", max_turns, DEFAULT_MAX_TURNS)
+            max_turns = DEFAULT_MAX_TURNS
+
+        allowed_tools = data.get("allowed_tools", list(DEFAULT_ALLOWED_TOOLS))
+        if not isinstance(allowed_tools, list) or not all(isinstance(t, str) for t in allowed_tools):
+            logger.warning("allowed_tools invalid, using default")
+            allowed_tools = list(DEFAULT_ALLOWED_TOOLS)
+
         return cls(
             api_key=api_key,
             workspace=workspace,
             model=data.get("model", DEFAULT_MODEL),
-            max_turns=int(data.get("max_turns", DEFAULT_MAX_TURNS)),
-            allowed_tools=data.get("allowed_tools", list(DEFAULT_ALLOWED_TOOLS)),
+            max_turns=max_turns,
+            allowed_tools=allowed_tools,
             base_url=data.get("base_url", "https://api.deepseek.com"),
         )

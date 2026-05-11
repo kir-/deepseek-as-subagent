@@ -1,16 +1,36 @@
 [project]
 name = "deepseek-as-subagent"
 version = "0.0.1"
-description = "Claude Code MCP server that runs DeepSeek as a real sub-agent — DeepSeek gets its own Read/Edit/Bash agent loop, not just a Q&A endpoint"
+description = "MCP server that runs DeepSeek as a real sub-agent for Claude Code / Codex CLI — DeepSeek gets its own Read/Edit/Bash agent loop, not just a Q&A endpoint."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-authors = [{ name = "PsChina", email = "pengwei.george@gmail.com" }]
+authors = [{ name = "PsChina" }]
+keywords = ["mcp", "deepseek", "claude-code", "codex-cli", "agent", "sub-agent", "llm-orchestration"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Utilities",
+]
 dependencies = [
     "mcp[cli]>=1.0.0",
     "openai>=1.40.0",
     "httpx[socks]>=0.27.0",  # 兼容 SOCKS 代理（科学上网环境常见）
 ]
+
+[project.urls]
+Homepage = "https://github.com/PsChina/deepseek-as-subagent"
+Repository = "https://github.com/PsChina/deepseek-as-subagent"
+Issues = "https://github.com/PsChina/deepseek-as-subagent/issues"
 
 [project.scripts]
 deepseek-mcp = "deepseek_mcp.server:main"

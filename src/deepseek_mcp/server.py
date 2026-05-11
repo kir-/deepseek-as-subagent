@@ -22,11 +22,33 @@ from . import __version__
 from .agent_loop import AgentLoopError, run_agent
 from .config import Config
 
-# 日志写到 ~/.deepseek-mcp/server.log（不污染 stdout，stdout 是 MCP 协议通道）
+# 日志写到 ~/.deepseek-mcp/（不污染 stdout，stdout 是 MCP 协议通道）
+# log 目录 700、文件 600 —— 含路径 / task 摘要，多用户机器上不该世界可读
 _LOG_DIR = Path.home() / ".deepseek-mcp"
 _LOG_DIR.mkdir(parents=True, exist_ok=True)
+_SERVER_LOG = _LOG_DIR / "server.log"
+_USAGE_LOG = _LOG_DIR / "usage.log"
+
+# Windows 不支持 POSIX 权限位，os.chmod 是 no-op；失败不致命
+try:
+    os.chmod(_LOG_DIR, 0o700)
+except OSError:
+    pass
+
+# 创建文件后立即 chmod（basicConfig 用 default umask 创建，可能是 644）
+for _p in (_SERVER_LOG, _USAGE_LOG):
+    if not _p.exists():
+        try:
+            _p.touch(mode=0o600)
+        except OSError:
+            pass
+    try:
+        os.chmod(_p, 0o600)
+    except OSError:
+        pass
+
 logging.basicConfig(
-    filename=str(_LOG_DIR / "server.log"),
+    filename=str(_SERVER_LOG),
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
 )
@@ -46,10 +68,24 @@ def ping() -> str:
     mode = os.getenv("DEEPSEEK_MODE", "auto")
     try:
         cfg = Config.load()
-        config_status = f"workspace={cfg.workspace} (sandbox), model={cfg.model}"
+        ws_short = _shorten_path(cfg.workspace)
+        config_status = f"workspace={ws_short} (sandbox), model={cfg.model}"
     except Exception as e:
         config_status = f"NOT_CONFIGURED ({e})"
     return f"pong from deepseek-mcp v{__version__} | mode={mode} | {config_status}"
+
+
+def _shorten_path(p: Path) -> str:
+    """长路径压成 ~ + 最后几段，避免 ping 输出爆屏。"""
+    s = str(p)
+    home = str(Path.home())
+    if s.startswith(home):
+        s = "~" + s[len(home):]
+    if len(s) > 60:
+        parts = s.split("/")
+        if len(parts) > 4:
+            s = "/".join(parts[:2] + ["..."] + parts[-2:])
+    return s
 
 
 @mcp.tool()
@@ -121,8 +157,15 @@ def delegate_to_deepseek(task: str, context: str = "") -> str:
     )
 
     # 用量记录（人类可读追加到 usage.log）
+    # 注意：只记 task 前 60 字符摘要，不记 context（context 可能含项目敏感细节）
     try:
-        with open(_LOG_DIR / "usage.log", "a") as f:
+        # 简单大小控制：>10MB 时轮转一次（rename 为 .1）
+        if _USAGE_LOG.exists() and _USAGE_LOG.stat().st_size > 10 * 1024 * 1024:
+            try:
+                _USAGE_LOG.replace(_USAGE_LOG.with_suffix(".log.1"))
+            except OSError:
+                pass
+        with open(_USAGE_LOG, "a", encoding="utf-8") as f:
             f.write(
                 f"{result['duration_seconds']:.1f}s  "
                 f"turns={result['turns_used']:>2}  "
@@ -130,6 +173,10 @@ def delegate_to_deepseek(task: str, context: str = "") -> str:
                 f"tokens={result['tokens']['total']:>6}  "
                 f"task={task[:60]!r}\n"
             )
+        try:
+            os.chmod(_USAGE_LOG, 0o600)
+        except OSError:
+            pass
     except Exception:
         pass  # 日志失败不影响主流程
 

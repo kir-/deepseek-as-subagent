@@ -9,12 +9,19 @@ import logging
 import time
 from pathlib import Path
 
-from openai import OpenAI
+from openai import APIConnectionError, APIError, OpenAI, RateLimitError
 
 from .config import Config
 from .tools import build_tool_schemas, execute_tool
 
 logger = logging.getLogger(__name__)
+
+# 单次 API 调用最多重试次数（不含首次）。只对网络 / 限流类瞬态错误生效。
+API_RETRY_ATTEMPTS = 2
+API_RETRY_BACKOFF_SECONDS = 2.0
+
+# 工具参数日志：含敏感内容的字段（避免写到 server.log）
+SENSITIVE_TOOL_ARG_KEYS = {"content", "new_string"}
 
 
 SYSTEM_PROMPT_TEMPLATE = """You are DeepSeek working as a sub-agent for Claude.
@@ -70,15 +77,7 @@ def run_agent(task: str, config: Config) -> dict:
     started = time.time()
 
     for turn in range(config.max_turns):
-        try:
-            response = client.chat.completions.create(
-                model=config.model,
-                messages=messages,
-                tools=tools,
-                tool_choice="auto",
-            )
-        except Exception as e:
-            raise AgentLoopError(f"DeepSeek API error on turn {turn}: {e}") from e
+        response = _call_with_retry(client, config, messages, tools, turn)
 
         usage = response.usage
         if usage:
@@ -120,7 +119,7 @@ def run_agent(task: str, config: Config) -> dict:
                     "Turn %d tool_call: %s(%s)",
                     turn,
                     tool_name,
-                    {k: v if not isinstance(v, str) or len(v) < 100 else f"<{len(v)} chars>" for k, v in args.items()},
+                    _redact_args_for_log(args),
                 )
                 result = execute_tool(tool_name, args, config.workspace)
 
@@ -132,8 +131,68 @@ def run_agent(task: str, config: Config) -> dict:
                 }
             )
 
-    # 跑到 max_turns 没收敛
+    # 跑到 max_turns 没收敛 —— 只展示最后一条 assistant content，不夹带完整 tool_calls blob
+    last_text = ""
+    for m in reversed(messages):
+        if m.get("role") == "assistant" and m.get("content"):
+            last_text = str(m["content"])[:500]
+            break
     raise AgentLoopError(
         f"Agent loop exceeded max_turns ({config.max_turns}). "
-        f"Last assistant message: {messages[-1] if messages else 'none'}"
+        f"Last assistant text: {last_text or '(none)'}"
     )
+
+
+def _call_with_retry(client, config, messages, tools, turn):
+    """带瞬态错误重试的单次 API 调用。
+
+    只对 network / rate-limit / 5xx 这类瞬态错误重试；4xx 等永久错误直接抛。
+    """
+    last_exc = None
+    for attempt in range(1 + API_RETRY_ATTEMPTS):
+        try:
+            return client.chat.completions.create(
+                model=config.model,
+                messages=messages,
+                tools=tools,
+                tool_choice="auto",
+            )
+        except (APIConnectionError, RateLimitError) as e:
+            last_exc = e
+            wait = API_RETRY_BACKOFF_SECONDS * (attempt + 1)
+            logger.warning(
+                "Turn %d API transient error (attempt %d/%d): %s — retry in %.1fs",
+                turn, attempt + 1, 1 + API_RETRY_ATTEMPTS, e, wait,
+            )
+            time.sleep(wait)
+        except APIError as e:
+            # 5xx 也重试，4xx 不重试
+            status = getattr(e, "status_code", None)
+            if status and 500 <= status < 600:
+                last_exc = e
+                wait = API_RETRY_BACKOFF_SECONDS * (attempt + 1)
+                logger.warning(
+                    "Turn %d API 5xx (attempt %d/%d): %s — retry in %.1fs",
+                    turn, attempt + 1, 1 + API_RETRY_ATTEMPTS, e, wait,
+                )
+                time.sleep(wait)
+                continue
+            raise AgentLoopError(f"DeepSeek API error on turn {turn}: {e}") from e
+        except Exception as e:
+            raise AgentLoopError(f"DeepSeek API error on turn {turn}: {e}") from e
+    raise AgentLoopError(
+        f"DeepSeek API unreachable after {1 + API_RETRY_ATTEMPTS} attempts on turn {turn}: {last_exc}"
+    ) from last_exc
+
+
+def _redact_args_for_log(args: dict) -> dict:
+    """工具参数写日志前脱敏 —— content/new_string 不能进 server.log（可能含 secrets）。"""
+    redacted = {}
+    for k, v in args.items():
+        if k in SENSITIVE_TOOL_ARG_KEYS and isinstance(v, str):
+            redacted[k] = f"<{len(v)} chars, redacted>"
+        elif isinstance(v, str) and len(v) >= 100:
+            redacted[k] = f"<{len(v)} chars>"
+        else:
+            redacted[k] = v
+    return redacted

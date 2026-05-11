@@ -10,6 +10,7 @@ DeepSeek 调用时：
 - 失败不抛异常，返回 "ERROR: ..." 字符串让 DeepSeek 自己看到 + 决定下一步
 - 输出截断：单次工具结果 > 50K chars 截断，防止把 DeepSeek context 撑爆
 - 路径必须走 safety.resolve_safe_path，禁止任何裸路径操作
+- 文本读写显式 utf-8，避免 Windows 默认 cp1252 乱码
 """
 from __future__ import annotations
 
@@ -21,6 +22,9 @@ from pathlib import Path
 from .safety import SandboxViolation, check_command, resolve_safe_path
 
 MAX_TOOL_OUTPUT = 50_000  # 单次工具结果最大字符数
+MAX_WRITE_BYTES = 5_000_000  # 单次 Write 最大字节数（5MB，防 DeepSeek 写爆磁盘）
+MAX_BASH_TIMEOUT = 600  # Bash 命令最大 timeout（秒）
+DEFAULT_BASH_TIMEOUT = 60
 
 
 def _truncate(text: str) -> str:
@@ -30,6 +34,16 @@ def _truncate(text: str) -> str:
             + f"\n... [truncated, total {len(text)} chars, showing first {MAX_TOOL_OUTPUT}]"
         )
     return text
+
+
+def _is_binary(path: Path, sniff_bytes: int = 8192) -> bool:
+    """简单二进制嗅探：前 N 字节含 null byte 即视为二进制。"""
+    try:
+        with path.open("rb") as f:
+            chunk = f.read(sniff_bytes)
+        return b"\x00" in chunk
+    except Exception:
+        return False
 
 
 # ===== 工具实现 =====
@@ -48,8 +62,10 @@ def _execute_read(args: dict, workspace: Path) -> str:
         return f"ERROR: file not found: {path}"
     if not abs_path.is_file():
         return f"ERROR: not a file: {path}"
+    if _is_binary(abs_path):
+        return f"ERROR: {path} appears to be binary; refusing to read as text."
     try:
-        text = abs_path.read_text(errors="replace")
+        text = abs_path.read_text(encoding="utf-8", errors="replace")
     except Exception as e:
         return f"ERROR: failed to read {path}: {e}"
 
@@ -69,13 +85,17 @@ def _execute_write(args: dict, workspace: Path) -> str:
     content = args.get("content", "")
     if not path:
         return "ERROR: missing required 'path' argument"
+    if not isinstance(content, str):
+        return "ERROR: 'content' must be a string"
+    if len(content.encode("utf-8", errors="replace")) > MAX_WRITE_BYTES:
+        return f"ERROR: content exceeds {MAX_WRITE_BYTES} bytes; split into smaller writes."
     try:
         abs_path = resolve_safe_path(path, workspace)
     except SandboxViolation as e:
         return f"ERROR: {e}"
     try:
         abs_path.parent.mkdir(parents=True, exist_ok=True)
-        abs_path.write_text(content)
+        abs_path.write_text(content, encoding="utf-8")
     except Exception as e:
         return f"ERROR: failed to write {path}: {e}"
     return f"OK: wrote {len(content)} chars to {path}"
@@ -95,8 +115,10 @@ def _execute_edit(args: dict, workspace: Path) -> str:
         return f"ERROR: {e}"
     if not abs_path.exists():
         return f"ERROR: file not found: {path}"
+    if _is_binary(abs_path):
+        return f"ERROR: {path} appears to be binary; refusing to edit as text."
     try:
-        text = abs_path.read_text(errors="replace")
+        text = abs_path.read_text(encoding="utf-8", errors="replace")
     except Exception as e:
         return f"ERROR: failed to read {path}: {e}"
 
@@ -110,7 +132,10 @@ def _execute_edit(args: dict, workspace: Path) -> str:
         )
 
     new_text = text.replace(old, new) if replace_all else text.replace(old, new, 1)
-    abs_path.write_text(new_text)
+    try:
+        abs_path.write_text(new_text, encoding="utf-8")
+    except Exception as e:
+        return f"ERROR: failed to write {path}: {e}"
     return f"OK: replaced {count if replace_all else 1} occurrence(s) in {path}"
 
 
@@ -123,7 +148,14 @@ def _execute_bash(args: dict, workspace: Path) -> str:
         check_command(command)
     except SandboxViolation as e:
         return f"ERROR: {e}"
-    timeout = int(args.get("timeout", 60))
+
+    # timeout 限制在 [1, MAX_BASH_TIMEOUT]，避免 DeepSeek 给个超大值卡死
+    try:
+        timeout = int(args.get("timeout", DEFAULT_BASH_TIMEOUT))
+    except (TypeError, ValueError):
+        timeout = DEFAULT_BASH_TIMEOUT
+    timeout = max(1, min(timeout, MAX_BASH_TIMEOUT))
+
     try:
         result = subprocess.run(
             command,
@@ -146,6 +178,16 @@ def _execute_bash(args: dict, workspace: Path) -> str:
     return _truncate(combined)
 
 
+def _safe_match(path_str: str, workspace: Path, ws_resolved: Path) -> Path | None:
+    """检查 glob 返回的路径是否仍在 workspace 内（防 symlink 逃逸）。"""
+    try:
+        p = Path(path_str).resolve()
+        p.relative_to(ws_resolved)
+        return p
+    except (ValueError, OSError):
+        return None
+
+
 def _execute_glob(args: dict, workspace: Path) -> str:
     """文件名 pattern 匹配。args: {pattern: str, path?: str}"""
     pattern = args.get("pattern", "")
@@ -156,17 +198,32 @@ def _execute_glob(args: dict, workspace: Path) -> str:
         base_path = resolve_safe_path(base, workspace) if base else workspace
     except SandboxViolation as e:
         return f"ERROR: {e}"
-    matches = sorted(_glob.glob(str(base_path / pattern), recursive=True))
-    # 截短：返回相对 workspace 的路径，便于后续工具调用
+
+    ws_resolved = workspace.resolve()
+    raw_matches = sorted(_glob.glob(str(base_path / pattern), recursive=True))
+
+    # 过滤掉 symlink 跳出沙箱的项
+    safe_matches: list[Path] = []
+    rejected = 0
+    for m in raw_matches:
+        p = _safe_match(m, workspace, ws_resolved)
+        if p is None:
+            rejected += 1
+            continue
+        safe_matches.append(p)
+
     rel_matches = []
-    for m in matches[:500]:  # 最多 500 条
+    for p in safe_matches[:500]:
         try:
-            rel_matches.append(str(Path(m).relative_to(workspace)))
+            rel_matches.append(str(p.relative_to(ws_resolved)))
         except ValueError:
-            rel_matches.append(m)
-    summary = f"Found {len(matches)} match(es)"
-    if len(matches) > 500:
+            rel_matches.append(str(p))
+
+    summary = f"Found {len(safe_matches)} match(es)"
+    if len(safe_matches) > 500:
         summary += " (showing first 500)"
+    if rejected:
+        summary += f" [{rejected} hidden: outside workspace]"
     return summary + ":\n" + "\n".join(rel_matches)
 
 
@@ -177,7 +234,10 @@ def _execute_grep(args: dict, workspace: Path) -> str:
         return "ERROR: missing required 'pattern' argument"
     base = args.get("path", "")
     file_glob = args.get("glob", "**/*")
-    max_matches = int(args.get("max_matches", 100))
+    try:
+        max_matches = max(1, min(int(args.get("max_matches", 100)), 1000))
+    except (TypeError, ValueError):
+        max_matches = 100
 
     try:
         base_path = resolve_safe_path(base, workspace) if base else workspace
@@ -188,15 +248,24 @@ def _execute_grep(args: dict, workspace: Path) -> str:
     except re.error as e:
         return f"ERROR: invalid regex: {e}"
 
+    ws_resolved = workspace.resolve()
     results = []
     for filepath in _glob.iglob(str(base_path / file_glob), recursive=True):
-        p = Path(filepath)
-        if not p.is_file():
+        # 关键：每个匹配项做沙箱再验证（防 symlink 逃逸读取 /etc/* 等）
+        p = _safe_match(filepath, workspace, ws_resolved)
+        if p is None or not p.is_file():
+            continue
+        if _is_binary(p):
             continue
         try:
-            for lineno, line in enumerate(p.read_text(errors="replace").splitlines(), 1):
+            for lineno, line in enumerate(
+                p.read_text(encoding="utf-8", errors="replace").splitlines(), 1
+            ):
                 if regex.search(line):
-                    rel = p.relative_to(workspace) if workspace in p.parents else p
+                    try:
+                        rel = p.relative_to(ws_resolved)
+                    except ValueError:
+                        rel = p
                     results.append(f"{rel}:{lineno}: {line}")
                     if len(results) >= max_matches:
                         break
@@ -241,7 +310,7 @@ def build_tool_schemas(allowed: list[str]) -> list[dict]:
     all_schemas = {
         "Read": {
             "name": "Read",
-            "description": "Read a file's contents. Use this before editing.",
+            "description": "Read a file's contents (UTF-8 text only). Use this before editing.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -254,7 +323,7 @@ def build_tool_schemas(allowed: list[str]) -> list[dict]:
         },
         "Write": {
             "name": "Write",
-            "description": "Write/overwrite a file with given content. Creates parent dirs if needed.",
+            "description": "Write/overwrite a file with given content (UTF-8). Creates parent dirs if needed. Max 5MB per write.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -280,19 +349,19 @@ def build_tool_schemas(allowed: list[str]) -> list[dict]:
         },
         "Bash": {
             "name": "Bash",
-            "description": "Run a shell command in the workspace directory. Dangerous commands are blocked.",
+            "description": f"Run a shell command in the workspace directory. Dangerous commands are blocked. Timeout clamped to [1, {MAX_BASH_TIMEOUT}]s.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "command": {"type": "string", "description": "The shell command to run."},
-                    "timeout": {"type": "integer", "description": "Timeout in seconds (default 60)."},
+                    "timeout": {"type": "integer", "description": f"Timeout in seconds (default {DEFAULT_BASH_TIMEOUT}, max {MAX_BASH_TIMEOUT})."},
                 },
                 "required": ["command"],
             },
         },
         "Glob": {
             "name": "Glob",
-            "description": "Find files matching a glob pattern (e.g. **/*.py, src/**/*.ts).",
+            "description": "Find files matching a glob pattern (e.g. **/*.py, src/**/*.ts). Symlinks pointing outside the workspace are silently filtered.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -304,14 +373,14 @@ def build_tool_schemas(allowed: list[str]) -> list[dict]:
         },
         "Grep": {
             "name": "Grep",
-            "description": "Search file contents with a regex pattern.",
+            "description": "Search file contents with a regex pattern. Sandbox re-validates every match (symlinks out of workspace are skipped).",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "pattern": {"type": "string", "description": "Regex pattern."},
                     "path": {"type": "string", "description": "Base directory. Optional."},
                     "glob": {"type": "string", "description": "File glob filter (default **/*)."},
-                    "max_matches": {"type": "integer", "description": "Max matches to return (default 100)."},
+                    "max_matches": {"type": "integer", "description": "Max matches to return (default 100, hard cap 1000)."},
                 },
                 "required": ["pattern"],
             },

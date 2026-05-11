@@ -153,13 +153,17 @@ if [ ! -f "$CONFIG_FILE" ]; then
         echo "  没有？去 https://platform.deepseek.com 注册 + 充值（¥20 起够用很久）"
         echo "  (沙箱自动跟随 Claude 启动目录，无需配置)"
         echo ""
-        # `|| true` 防止 set -e 在用户 Ctrl+C 时整个脚本退出
+        # -s 静默：API key 不回显到屏幕 / scrollback
+        # || true 防止 set -e 在用户 Ctrl+C 时整个脚本退出
         if [ -e /dev/tty ] && [ -r /dev/tty ]; then
-            read -r -p "  粘贴 DeepSeek API key $DEFAULT_KEY_HINT: " API_KEY < /dev/tty || true
+            read -rs -p "  粘贴 DeepSeek API key $DEFAULT_KEY_HINT: " API_KEY < /dev/tty || true
         else
-            read -r -p "  粘贴 DeepSeek API key $DEFAULT_KEY_HINT: " API_KEY || true
+            read -rs -p "  粘贴 DeepSeek API key $DEFAULT_KEY_HINT: " API_KEY || true
         fi
         echo ""
+        echo ""
+        # strip 前后空白（粘贴常带尾空格 / 换行）
+        API_KEY="$(printf '%s' "$API_KEY" | tr -d '[:space:]')"
     fi
 
     if [ -z "$API_KEY" ]; then
@@ -171,7 +175,12 @@ if [ ! -f "$CONFIG_FILE" ]; then
 
     # workspace 不写入：让 MCP server 用 os.getcwd() 跟随 Claude Code 启动目录
     # 高级用户想锁定沙箱：手动加 "workspace": "/abs/path" 字段
-    cat > "$CONFIG_FILE" <<EOF
+    #
+    # umask 077 在子 shell 内生效，确保 config 文件创建时就是 600（避免
+    # "先 644 后 chmod" 的 race window，本地多用户机器上有意义）
+    (
+        umask 077
+        cat > "$CONFIG_FILE" <<EOF
 {
   "api_key": "$API_KEY",
   "model": "deepseek-v4-pro",
@@ -179,6 +188,7 @@ if [ ! -f "$CONFIG_FILE" ]; then
   "allowed_tools": ["Read", "Write", "Edit", "Bash", "Glob", "Grep"]
 }
 EOF
+    )
     chmod 600 "$CONFIG_FILE" 2>/dev/null || true
     if [ "$NEED_KEY" = "0" ]; then
         echo "  ✓ config 已写入（含你刚才输入的 key）"
@@ -202,7 +212,11 @@ if ! command -v claude >/dev/null 2>&1; then
 elif claude mcp list 2>/dev/null | grep -q "^deepseek:"; then
     echo "       已注册，跳过"
 else
-    claude mcp add deepseek -s user -- "$CLI"
+    # 旧版 claude 可能不支持 -s user；失败就提示用户手动注册，不让 set -e kill 脚本
+    if ! claude mcp add deepseek -s user -- "$CLI" 2>/dev/null; then
+        echo "       ⚠ 自动注册失败（claude CLI 可能版本较旧）"
+        echo "       手动跑: claude mcp add deepseek -- \"$CLI\""
+    fi
 fi
 
 # ===== Step 5: 部署 skill + command =====
@@ -267,7 +281,7 @@ if [ "${NEED_KEY:-0}" = "1" ]; then
     echo "下一步:"
     echo "  1. 编辑 $CONFIG_FILE 把 api_key 改成你的 DeepSeek key"
     echo "     (没有的话去 https://platform.deepseek.com 拿)"
-    echo "  2. 跑 claude，在对话里说: '请调用 ping 工具' 验证"
+    echo "  2. 跑 claude，输入: 请调用 ping 工具"
     echo ""
     # 自动打开配置文件
     if command -v code >/dev/null 2>&1; then
@@ -278,9 +292,13 @@ if [ "${NEED_KEY:-0}" = "1" ]; then
         open -t "$CONFIG_FILE" 2>/dev/null || true
     fi
 else
-    echo "下一步: 跑 claude，主对话提到批量任务时会自动派给 DeepSeek"
-    echo "       或显式用 /ds <task> 强制派工"
+    echo "立即试用:"
+    echo "  cd <你的项目目录> && claude"
+    echo "  > /ds 写个 hello world 到 /tmp/hi.py     # 强制派 DeepSeek 干活"
+    echo "  > 请调用 ping 工具                       # 验证 MCP 连接 + 看沙箱根"
+    echo ""
+    echo "自动派工: 主对话里说\"批量提取 i18n 到 JSON\"之类的任务，Claude 会自己派给 DeepSeek"
+    echo "关闭派工: 终端敲 'pure' 启动 Claude（下次开终端 alias 才生效）"
 fi
 echo ""
-echo "(可选 'pure' alias 下次开终端自动生效)"
 echo "卸载: ./uninstall.sh"
