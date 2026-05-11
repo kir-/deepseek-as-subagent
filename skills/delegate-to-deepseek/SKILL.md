@@ -1,6 +1,6 @@
 ---
 name: delegate-to-deepseek
-description: 把所有"中等难度及以下"的任务派给 DeepSeek 跑完整 sub-agent loop（DeepSeek 比 Claude 便宜得多，能派就派）。包括：批量改文件、扫日志、翻译、ETL、写脚本、补测试、写文档、CRUD 增删、单领域 refactor、单组件 / 单 endpoint 实现。**铁律：派工决策必须在 Claude 读源码之前做** —— 一旦 Read 了源码再派工就是双倍消耗。调用 mcp__deepseek__delegate_to_deepseek 工具前只能用 Glob/LS 看范围，不能 Read 文件内容。调用后必须验证结果（不盲信 DeepSeek 自报"完成"），抽样 Read 几个产物确认质量。**只有以下场景才自己干**：(1) 跨领域架构设计 / 选型 ADR；(2) bug 根因分析（推理密集）；(3) 强依赖 CLAUDE.md / dev-cases 上下文；(4) 用户明确说"自己干"；(5) 单文件 < 200 行的微调（DS reasoning overhead 不划算）。环境变量 DEEPSEEK_MODE=off 时跳过本 skill。
+description: 把所有"中等难度及以下"的任务派给 DeepSeek 跑完整 sub-agent loop（DeepSeek 比 Claude 便宜得多，能派就派）。包括：批量改文件、扫日志、翻译、ETL、写脚本、补测试、写文档、CRUD 增删、单领域 refactor、单组件 / 单 endpoint 实现。**铁律：派工决策必须在 Claude 读源码之前做** —— 一旦 Read 了源码再派工就是双倍消耗。调用 mcp__deepseek__delegate_to_deepseek 工具前只能用 Glob/LS 看范围，不能 Read 文件内容（WebSearch/WebFetch 允许，因为是外部资料）。**DeepSeek sub-agent 不能联网** —— 任务需要外部文档 / 新 API / 错误码 / spec 时，Claude 必须用自己的 WebSearch / WebFetch 先查好，把摘要塞进 context 传给 DS（Anthropic 包了费用，免费）。调用后必须验证结果（不盲信 DeepSeek 自报"完成"），抽样 Read 几个产物确认质量。**只有以下场景才自己干**：(1) 跨领域架构设计 / 选型 ADR；(2) bug 根因分析（推理密集）；(3) 强依赖 CLAUDE.md / dev-cases 上下文；(4) 用户明确说"自己干"；(5) 单文件 < 200 行的微调（DS reasoning overhead 不划算）。环境变量 DEEPSEEK_MODE=off 时跳过本 skill。
 ---
 
 # delegate-to-deepseek — Claude 派工给 DeepSeek 的准则
@@ -45,6 +45,7 @@ Claude Read 50 个文件 ─ 烧 100k     Claude Glob 看范围 ─ 烧 500
 ✅ `Glob` —— 看有多少文件、什么扩展名
 ✅ `LS` —— 看目录结构
 ✅ `Bash` 只读命令 —— `ls`、`wc -l`、`find . -name`、`du -sh`、`git status`
+✅ `WebSearch` / `WebFetch` —— 查外部文档 / 新 API / 错误码（用来给 DS 补 context，Anthropic 包了费用）
 
 ### 派工决策前**禁止**的工具
 
@@ -109,7 +110,7 @@ Claude Read 50 个文件 ─ 烧 100k     Claude Glob 看范围 ─ 烧 500
 
 ## 派工前必须做的（避免上下文丢失）
 
-DeepSeek 进入 sub-agent 后**看不到**主对话历史、CLAUDE.md、dev-cases、Claude 内存。所有它需要的上下文**必须**通过 `task` 和 `context` 参数传过去。
+DeepSeek 进入 sub-agent 后**看不到**主对话历史、CLAUDE.md、dev-cases、Claude 内存、**也不能联网**。所有它需要的上下文（包括外部资料）**必须**通过 `task` 和 `context` 参数传过去。
 
 调用前**只用 Glob / LS / 只读 Bash**（不要 Read！）收集：
 
@@ -122,6 +123,67 @@ DeepSeek 进入 sub-agent 后**看不到**主对话历史、CLAUDE.md、dev-case
    - 应该生成 / 修改什么
    - 完成的 verifiable 信号（"写一个 fastapi endpoint，curl localhost/x 返回 200"）
 ```
+
+## 🌐 用 Claude 自己的 WebSearch / WebFetch 给 DS 补外部知识
+
+**关键认识**：DeepSeek sub-agent **不能联网**（沙箱阻 curl/wget，也没暴露 web 工具）。Claude 的 `WebSearch` / `WebFetch` 是 Anthropic 后端实现的，包含在 Max OAuth 订阅里 —— **不额外花钱**。
+
+**派工前规则**：如果任务需要 Claude 自己不熟的外部知识，**Claude 应该用 WebSearch / WebFetch 查好，把结果摘要塞进 `context`**。这条规则不破坏铁律（不 Read 项目源码），因为 Web 工具拿到的是外部资料，不是项目代码的 sunk cost。
+
+### 何时该 pre-flight 搜索
+
+| 任务里出现的信号 | Claude 该搜什么 |
+|---|---|
+| 用新版本 / 新框架 API（"FastAPI 0.115"、"Tailwind v4"） | 最新文档 / changelog / breaking changes |
+| 用 Claude 不确定的库（小众 / niche） | 库的 README + 主要 API 示例 |
+| 实现某协议 / spec（"OIDC"、"WebRTC SDP"） | spec 关键章节摘要 |
+| 修一个有错误码的 bug | 错误码对应的官方说明 / 已知 issue |
+| 用某 SaaS API（DeepSeek API、Stripe API） | 官方 endpoint + 参数 schema 摘要 |
+| 性能优化某算法 | 已知最佳实现 / benchmark 数据 |
+
+### Pre-flight 搜索模板
+
+```
+1. 用 WebSearch 查 1-3 个 query（不要狂搜，省 Anthropic 配额）
+2. 摘要关键信息：
+   - API 签名 / 参数表
+   - 必要的 import / setup
+   - 常见坑 / breaking change
+3. 把摘要塞进 delegate_to_deepseek(context=...) 的开头
+4. 派工
+```
+
+### 实例：DS 实现一个 fastapi SSE endpoint
+
+**❌ 不 pre-flight 的派工（DS 拿不到最新文档，写出来可能用 0.95 时代的旧 API）**：
+```
+task="实现一个 fastapi SSE endpoint /events 推流。"
+context="项目用 fastapi 0.115。"
+```
+
+**✅ pre-flight 后的派工**：
+```
+（先 Claude 端调用 WebSearch："fastapi SSE EventSourceResponse 0.115 example"）
+（拿到关键代码片段，摘要进 context）
+
+task="实现 fastapi SSE endpoint /events 推流。"
+context="项目 fastapi 0.115，参考 API 用法：
+- from sse_starlette.sse import EventSourceResponse
+- 返回 EventSourceResponse(generator())
+- generator 是 async def，yield dict {'event': 'msg', 'data': '...'}
+- 客户端用 EventSource API 接收
+
+边界：放在 api/events.py，复用 db session = Depends(get_session)
+成功标准：curl -N localhost:8000/events 拿到 SSE 流。"
+```
+
+第二种 DS 一次就写对的概率显著提高。
+
+### 何时不需要 pre-flight
+
+- DS 应该会的常识（Python stdlib、shell 命令、SQL 基础）
+- 项目内部 idiom（用 Glob/LS 收集而非 web 搜索）
+- 任务本身就是搜索（"扫这些日志找 X"）—— 没什么需要外部资料的
 
 ## 派工模板
 

@@ -61,6 +61,7 @@ Allowed before deciding to delegate:
 - `Glob` patterns (count and list matching files)
 - `LS` (directory structure)
 - Read-only `Bash`: `ls`, `wc -l`, `find -name`, `du -sh`
+- Web search / web fetch tools (your built-in ones) — see "Pre-flight search" below
 
 **Not** allowed before deciding:
 - `Read` (file contents)
@@ -68,6 +69,36 @@ Allowed before deciding to delegate:
 
 If you can't decide without reading file contents — you shouldn't delegate.
 Just do the task yourself.
+
+### Pre-flight web search (key insight)
+
+**DeepSeek sub-agent cannot reach the network** — the MCP server's Bash
+sandbox blocks curl/wget, and no web tools are exposed to DeepSeek. But
+your own web search / fetch tools cost nothing extra (covered by your
+subscription / API plan).
+
+**Rule**: if the task needs external knowledge (new framework APIs,
+spec excerpts, error code meanings, niche library docs), **you should
+search before delegating** and paste the summary into `context`. This
+doesn't violate the no-Read rule because web content is external — there
+is no sunk-cost double-burn.
+
+When to pre-flight search:
+| Signal in task | Search for |
+|---|---|
+| New version of a framework ("FastAPI 0.115") | Latest changelog / breaking changes |
+| Niche library you're unsure about | README + main API examples |
+| Implementing a protocol/spec | Key spec section summaries |
+| Fixing a bug with a known error code | Official error description + known issues |
+| Calling a SaaS API | Official endpoints + param schema |
+
+Template:
+```
+1. Web-search 1-3 queries (don't over-search)
+2. Summarize key info (signatures, imports, gotchas)
+3. Paste summary at the start of delegate_to_deepseek(context=...)
+4. Delegate
+```
 
 ### How to call it
 
