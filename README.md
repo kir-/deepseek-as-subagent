@@ -1,8 +1,14 @@
 # deepseek-as-subagent
 
-> Run DeepSeek as a **real sub-agent** inside Claude Code — not just an LLM endpoint.
+[![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![GitHub stars](https://img.shields.io/github/stars/PsChina/deepseek-as-subagent?style=social)](https://github.com/PsChina/deepseek-as-subagent)
+[![MCP](https://img.shields.io/badge/protocol-MCP-purple)](https://modelcontextprotocol.io/)
+[![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey)](https://github.com/PsChina/deepseek-as-subagent)
+
+> Run DeepSeek as a **real sub-agent** inside Claude Code / Codex CLI — not just an LLM endpoint.
 > Claude stays on the main loop (your Max OAuth, your context, your judgment).
-> DeepSeek gets its own Read / Edit / Bash agent loop for the batch / mechanical work.
+> DeepSeek gets its own Read / Write / Edit / Bash / Glob / Grep / NotebookEdit agent loop for batch / mechanical work.
 
 ```
        Claude (your main agent, Max OAuth, expensive but smart)
