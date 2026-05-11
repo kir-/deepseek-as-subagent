@@ -107,7 +107,7 @@ def delegate_to_deepseek(task: str, context: str = "") -> str:
     Bad fits (do it yourself instead):
       - Architectural design / cross-file judgment
       - Bug root-cause analysis
-      - Tasks requiring project-specific idioms from CLAUDE.md / dev-cases
+      - Tasks requiring project-specific idioms from CLAUDE.md or other repo conventions
 
     Args:
         task: Clear description of what DeepSeek should accomplish, including

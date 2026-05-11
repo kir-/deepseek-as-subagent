@@ -1,6 +1,6 @@
 ---
 name: delegate-to-deepseek
-description: 把所有"中等难度及以下"的任务派给 DeepSeek 跑完整 sub-agent loop（DeepSeek 比 Claude 便宜 ~50x，能派就派）。包括：批量改文件、扫日志、翻译、ETL、写脚本、补测试、写文档、CRUD 增删、单领域 refactor、单组件 / 单 endpoint 实现。**派工粒度铁律：每次派"完整逻辑单元"（DS 内部跑 10-30 turns 一次到位），不要拆"步骤"分多次派 —— 拆太细会被 5 个反派工税（拆任务/上下文重读/验证/起步费/返工）吃掉省钱效果，甚至比不派还贵。** **决策铁律：派工决策必须在 Claude 读源码之前做** —— 一旦 Read 了源码再派工就是双倍消耗。调用 mcp__deepseek__delegate_to_deepseek 工具前只能用 Glob/LS 看范围，不能 Read 文件内容（WebSearch/WebFetch 允许，因为是外部资料）。**DeepSeek sub-agent 不能联网** —— 任务需要外部文档 / 新 API / 错误码 / spec 时，Claude 必须用自己的 WebSearch / WebFetch 先查好，把摘要塞进 context 传给 DS（Anthropic 包了费用，免费）。调用后必须验证结果（不盲信 DeepSeek 自报"完成"），抽样 Read 几个产物确认质量。**只有以下场景才自己干**：(1) 跨领域架构设计 / 选型 ADR；(2) bug 根因分析（推理密集）；(3) 强依赖 CLAUDE.md / dev-cases 上下文；(4) 用户明确说"自己干"；(5) 单文件 < 200 行的微调（DS reasoning overhead 不划算）。环境变量 DEEPSEEK_MODE=off 时跳过本 skill。
+description: 把所有"中等难度及以下"的任务派给 DeepSeek 跑完整 sub-agent loop（DeepSeek 比 Claude 便宜 ~50x，能派就派）。包括：批量改文件、扫日志、翻译、ETL、写脚本、补测试、写文档、CRUD 增删、单领域 refactor、单组件 / 单 endpoint 实现。**派工粒度铁律：每次派"完整逻辑单元"（DS 内部跑 10-30 turns 一次到位），不要拆"步骤"分多次派 —— 拆太细会被 5 个反派工税（拆任务/上下文重读/验证/起步费/返工）吃掉省钱效果，甚至比不派还贵。** **决策铁律：派工决策必须在 Claude 读源码之前做** —— 一旦 Read 了源码再派工就是双倍消耗。调用 mcp__deepseek__delegate_to_deepseek 工具前只能用 Glob/LS 看范围，不能 Read 文件内容（WebSearch/WebFetch 允许，因为是外部资料）。**DeepSeek sub-agent 不能联网** —— 任务需要外部文档 / 新 API / 错误码 / spec 时，Claude 必须用自己的 WebSearch / WebFetch 先查好，把摘要塞进 context 传给 DS（Anthropic 包了费用，免费）。调用后必须验证结果（不盲信 DeepSeek 自报"完成"），抽样 Read 几个产物确认质量。**只有以下场景才自己干**：(1) 跨领域架构设计 / 选型 ADR；(2) bug 根因分析（推理密集）；(3) 强依赖 CLAUDE.md / 项目内部约定文档（DS 拿不到）；(4) 用户明确说"自己干"；(5) 单文件 < 200 行的微调（DS reasoning overhead 不划算）。环境变量 DEEPSEEK_MODE=off 时跳过本 skill。
 ---
 
 # delegate-to-deepseek — Claude 派工给 DeepSeek 的准则
@@ -9,7 +9,7 @@ description: 把所有"中等难度及以下"的任务派给 DeepSeek 跑完整 
 
 DeepSeek v4-pro 已经很强，**单价比 Claude Opus 便宜 ~10x**。Claude 的稀缺资源是用户的 Max OAuth 配额，DeepSeek 的稀缺资源只是 ¥（用户已付费）。**默认派**，除非以下硬约束之一命中：
 
-- ❌ 任务依赖 CLAUDE.md / dev-cases / 公司 brain 上下文（DS 拿不到）
+- ❌ 任务依赖 CLAUDE.md / 项目内部约定文档（DS 拿不到 Claude 端的记忆）
 - ❌ 跨领域架构设计 / 技术选型 / ADR（需要 Claude 的综合推理）
 - ❌ bug 根因分析（推理密集，DS 不如 Claude）
 - ❌ 单文件 < 200 行的微调（DS 的 reasoning 起步成本 > 省下的 Claude tokens）
@@ -159,7 +159,7 @@ Claude 的活是**"识别逻辑单元 + 设计接口 + 整合"**，DS 的活是*
 
 ## 派工前必须做的（避免上下文丢失）
 
-DeepSeek 进入 sub-agent 后**看不到**主对话历史、CLAUDE.md、dev-cases、Claude 内存、**也不能联网**。所有它需要的上下文（包括外部资料）**必须**通过 `task` 和 `context` 参数传过去。
+DeepSeek 进入 sub-agent 后**看不到**主对话历史、CLAUDE.md、项目内部约定文档、Claude 内存、**也不能联网**。所有它需要的上下文（包括外部资料）**必须**通过 `task` 和 `context` 参数传过去。
 
 调用前**只用 Glob / LS / 只读 Bash**（不要 Read！）收集：
 
@@ -298,12 +298,12 @@ DeepSeek 自报"完成"不等于真的完成。**Claude 必须验证**：
 | 产物质量差 | 验证后修；累计 2 次差 → 后续主动跳过 delegate（本会话） |
 | 用户连续 2 次 `pure` 启动 | 默认不派工，等用户显式 `/ds` 才派 |
 
-## 与公司 brain rules 的关系
+## 通用工程纪律（派工不豁免）
 
-- `proactive-thinking` — 派工前充分收集 context，不留半成品
-- `secrets-policy` — 不要把 API key / 敏感数据塞进 task / context 参数
-- `event-driven` — 不要 sleep 等 DeepSeek 完成，工具调用同步返回
-- `code-quality` — 派工不豁免代码质量责任，验证产物时按 SOLID / LoD 标准抽查
+- 派工前充分收集 context，不留半成品给 DS
+- 不要把 API key / 敏感数据塞进 task / context 参数
+- 不要 sleep 等 DeepSeek 完成 —— 工具调用同步返回
+- DS 的产物仍要按 SOLID / 项目代码规范抽查，派工不豁免代码质量责任
 
 ## 用户显式控制
 
