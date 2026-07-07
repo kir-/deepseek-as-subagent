@@ -1,0 +1,13 @@
+{
+  "mode": "logging_diagnostics",
+  "allowed_files": ["src/**/*.py", "tests/**/*.py"],
+  "forbidden_files": [".env", ".env.*", "*.key", "*.pem", "*.token", "secrets/**", "outputs/**", "results/final/**"],
+  "must_not_change": [
+    "training objective",
+    "environment stepping semantics",
+    "evaluation metric definitions"
+  ],
+  "success_checks": ["pytest tests/"],
+  "expected_outputs": ["changed_files", "commands_run", "risks"],
+  "review_after": "codex-full-review"
+}

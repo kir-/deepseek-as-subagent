@@ -1,0 +1,13 @@
+{
+  "mode": "implement",
+  "allowed_files": ["src/**/*.py", "tests/**/*.py"],
+  "forbidden_files": [".env", ".env.*", "*.key", "*.pem", "*.token", "secrets/**", "wandb/**", "outputs/**", "runs/**", "results/final/**", "paper/figures/final/**", "paper/tables/final/**"],
+  "must_not_change": [
+    "estimator objective unless explicitly requested",
+    "public CLI/API behavior unless explicitly requested",
+    "frozen experiment result files"
+  ],
+  "success_checks": ["pytest tests/"],
+  "expected_outputs": ["changed_files", "commands_run", "assumptions", "risks"],
+  "review_after": "codex-full-review"
+}

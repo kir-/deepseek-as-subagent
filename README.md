@@ -53,7 +53,7 @@ This project gives DeepSeek **its own full agent loop**: tool dispatch, file I/O
 
 ## What's in the box
 
-- **MCP server** (Python, stdio transport) exposing one real tool: `delegate_to_deepseek(task, context)`
+- **MCP server** (Python, stdio transport) exposing one real tool: `delegate_to_deepseek(task, context, contract=None)`
 - **Local agent loop** for DeepSeek (`agent_loop.py`) with OpenAI-compatible function calling
 - **7 sandboxed tools** for DeepSeek to use: Read / Write / Edit / Bash / Glob / Grep / NotebookEdit (Jupyter cell-level editing)
 - **Path sandbox + command blacklist** (`safety.py`) — DeepSeek can't escape your workspace or run `rm -rf /`
@@ -92,7 +92,45 @@ After install, just use `claude` normally. The plugin adds:
 
 - `delegate_to_deepseek` — Claude auto-invokes it when the task fits (see `skills/delegate-to-deepseek/SKILL.md`)
 - `/ds <task>` — force delegation, skip Claude's own judgment
+- `/ds-impl <task>` — research-pipeline delegation with an explicit task contract
 - `pure` shell alias — start Claude with DeepSeek disabled for this session
+
+## Research-agent pipeline mode
+
+This fork is designed for a three-agent research workflow:
+
+Claude plans.
+DeepSeek implements bounded patches.
+Codex reviews adversarially.
+Claude decides.
+
+DeepSeek should not make final research claims or decide whether a method is correct.
+
+For research implementation tasks, call:
+
+```python
+delegate_to_deepseek(
+    task="Implement diagnostics under the contract.",
+    context="Follow existing trainer logging conventions.",
+    contract={
+        "mode": "logging_diagnostics",
+        "allowed_files": ["src/**/*.py", "tests/**/*.py"],
+        "forbidden_files": [".env", "secrets/**", "outputs/**", "results/final/**"],
+        "must_not_change": [
+            "training objective",
+            "environment stepping semantics",
+            "evaluation metric definitions"
+        ],
+        "success_checks": ["pytest tests/"],
+        "expected_outputs": ["changed_files", "commands_run", "risks"],
+        "review_after": "codex-full-review"
+    },
+)
+```
+
+After DeepSeek returns, inspect the server-generated changed files, git status,
+and diff stat. Then run Codex full-review. If any review stage fails and code
+changes are made, restart from software review.
 
 ## When delegation actually saves money
 
@@ -141,6 +179,19 @@ needed. To lock the sandbox to a fixed path regardless of cwd, add
 `"workspace": "/abs/path"` to the config.
 
 Override at runtime with env vars: `DEEPSEEK_API_KEY`, `DEEPSEEK_WORKSPACE`, `DEEPSEEK_MODE=off`.
+
+### Task contracts
+
+Contracts restrict a single delegation without granting any tools beyond the
+global `allowed_tools` config. Effective tools are:
+
+```text
+global_allowed_tools ∩ mode_allowed_tools ∩ contract_allowed_tools
+```
+
+Supported modes are `implement`, `readonly_scan`, `test_writer`,
+`logging_diagnostics`, `config_plumbing`, and `docs`. Example contracts live in
+[`contracts/`](contracts/).
 
 ## Uninstall
 

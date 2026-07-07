@@ -21,6 +21,7 @@ import subprocess
 import uuid
 from pathlib import Path
 
+from .contract import TaskContract, check_contract_command, check_contract_path
 from .safety import SandboxViolation, check_command, resolve_safe_path
 
 MAX_TOOL_OUTPUT = 50_000  # 单次工具结果最大字符数
@@ -51,13 +52,15 @@ def _is_binary(path: Path, sniff_bytes: int = 8192) -> bool:
 # ===== 工具实现 =====
 
 
-def _execute_read(args: dict, workspace: Path) -> str:
+def _execute_read(args: dict, workspace: Path, contract: TaskContract | None = None) -> str:
     """读文件。args: {path: str, offset?: int, limit?: int}"""
     path = args.get("path", "")
     if not path:
         return "ERROR: missing required 'path' argument"
     try:
         abs_path = resolve_safe_path(path, workspace)
+        if contract is not None:
+            check_contract_path(path, workspace, contract, "Read")
     except SandboxViolation as e:
         return f"ERROR: {e}"
     if not abs_path.exists():
@@ -81,7 +84,7 @@ def _execute_read(args: dict, workspace: Path) -> str:
     return _truncate(text)
 
 
-def _execute_write(args: dict, workspace: Path) -> str:
+def _execute_write(args: dict, workspace: Path, contract: TaskContract | None = None) -> str:
     """写文件（覆盖）。args: {path: str, content: str}"""
     path = args.get("path", "")
     content = args.get("content", "")
@@ -93,6 +96,8 @@ def _execute_write(args: dict, workspace: Path) -> str:
         return f"ERROR: content exceeds {MAX_WRITE_BYTES} bytes; split into smaller writes."
     try:
         abs_path = resolve_safe_path(path, workspace)
+        if contract is not None:
+            check_contract_path(path, workspace, contract, "Write")
     except SandboxViolation as e:
         return f"ERROR: {e}"
     try:
@@ -103,7 +108,7 @@ def _execute_write(args: dict, workspace: Path) -> str:
     return f"OK: wrote {len(content)} chars to {path}"
 
 
-def _execute_edit(args: dict, workspace: Path) -> str:
+def _execute_edit(args: dict, workspace: Path, contract: TaskContract | None = None) -> str:
     """精确字符串替换。args: {path: str, old_string: str, new_string: str, replace_all?: bool}"""
     path = args.get("path", "")
     old = args.get("old_string", "")
@@ -113,6 +118,8 @@ def _execute_edit(args: dict, workspace: Path) -> str:
         return "ERROR: missing required 'path' or 'old_string'"
     try:
         abs_path = resolve_safe_path(path, workspace)
+        if contract is not None:
+            check_contract_path(path, workspace, contract, "Edit")
     except SandboxViolation as e:
         return f"ERROR: {e}"
     if not abs_path.exists():
@@ -141,13 +148,15 @@ def _execute_edit(args: dict, workspace: Path) -> str:
     return f"OK: replaced {count if replace_all else 1} occurrence(s) in {path}"
 
 
-def _execute_bash(args: dict, workspace: Path) -> str:
+def _execute_bash(args: dict, workspace: Path, contract: TaskContract | None = None) -> str:
     """跑 shell 命令。args: {command: str, timeout?: int(seconds)}"""
     command = args.get("command", "")
     if not command:
         return "ERROR: missing required 'command' argument"
     try:
         check_command(command)
+        if contract is not None:
+            check_contract_command(command, workspace, contract)
     except SandboxViolation as e:
         return f"ERROR: {e}"
 
@@ -192,7 +201,7 @@ def _safe_match(path_str: str, workspace: Path, ws_resolved: Path) -> Path | Non
         return None
 
 
-def _execute_glob(args: dict, workspace: Path) -> str:
+def _execute_glob(args: dict, workspace: Path, contract: TaskContract | None = None) -> str:
     """文件名 pattern 匹配。args: {pattern: str, path?: str}"""
     pattern = args.get("pattern", "")
     if not pattern:
@@ -231,7 +240,7 @@ def _execute_glob(args: dict, workspace: Path) -> str:
     return summary + ":\n" + "\n".join(rel_matches)
 
 
-def _execute_notebook_edit(args: dict, workspace: Path) -> str:
+def _execute_notebook_edit(args: dict, workspace: Path, contract: TaskContract | None = None) -> str:
     """编辑 Jupyter notebook (.ipynb) 的单个 cell。
 
     比 Read+Write 整个 ipynb 强得多 —— DS 只传"要改什么"，server 端
@@ -258,6 +267,8 @@ def _execute_notebook_edit(args: dict, workspace: Path) -> str:
 
     try:
         abs_path = resolve_safe_path(path, workspace)
+        if contract is not None:
+            check_contract_path(path, workspace, contract, "NotebookEdit")
     except SandboxViolation as e:
         return f"ERROR: {e}"
 
@@ -365,7 +376,7 @@ def _execute_notebook_edit(args: dict, workspace: Path) -> str:
     return result_msg + f" (total cells: {len(cells)})"
 
 
-def _execute_grep(args: dict, workspace: Path) -> str:
+def _execute_grep(args: dict, workspace: Path, contract: TaskContract | None = None) -> str:
     """正则搜索文件内容。args: {pattern: str, path?: str, glob?: str, max_matches?: int}"""
     pattern = args.get("pattern", "")
     if not pattern:
@@ -433,12 +444,20 @@ TOOL_REGISTRY = {
 }
 
 
-def execute_tool(name: str, args: dict, workspace: Path) -> str:
+def execute_tool(
+    name: str,
+    args: dict,
+    workspace: Path,
+    contract: TaskContract | None = None,
+    allowed_tools: list[str] | None = None,
+) -> str:
     """调度入口：根据工具名调对应实现。"""
+    if allowed_tools is not None and name not in allowed_tools:
+        return f"ERROR: tool '{name}' is not allowed by this task contract."
     fn = TOOL_REGISTRY.get(name)
     if fn is None:
         return f"ERROR: unknown tool '{name}'. Available: {list(TOOL_REGISTRY.keys())}"
-    return fn(args, workspace)
+    return fn(args, workspace, contract)
 
 
 # ===== OpenAI function calling schema =====

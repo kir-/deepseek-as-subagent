@@ -1,0 +1,11 @@
+{
+  "mode": "test_writer",
+  "allowed_files": ["tests/**/*.py", "src/**/*.py"],
+  "forbidden_files": [".env", ".env.*", "*.key", "*.pem", "*.token", "secrets/**", "outputs/**", "runs/**", "results/final/**"],
+  "must_not_change": [
+    "production behavior except the minimal source changes required to make written invariants testable"
+  ],
+  "success_checks": ["pytest tests/"],
+  "expected_outputs": ["changed_files", "commands_run", "checks_passed_failed", "risks"],
+  "review_after": "codex-full-review"
+}

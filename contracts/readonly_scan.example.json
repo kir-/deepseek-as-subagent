@@ -1,0 +1,10 @@
+{
+  "mode": "readonly_scan",
+  "allowed_tools": ["Read", "Glob", "Grep", "Bash"],
+  "allowed_files": ["**/*"],
+  "forbidden_files": [".env", ".env.*", "*.key", "*.pem", "*.token", "secrets/**", "wandb/**", "outputs/**", "runs/**"],
+  "must_not_change": ["all repository files"],
+  "success_checks": [],
+  "expected_outputs": ["patterns_found", "assumptions", "risks"],
+  "review_after": "codex-full-review"
+}

@@ -241,6 +241,8 @@ deploy_link "$PROJECT_ROOT/skills/delegate-to-deepseek" \
             "$CLAUDE_SKILLS/delegate-to-deepseek" "skill"
 deploy_link "$PROJECT_ROOT/commands/ds.md" \
             "$CLAUDE_COMMANDS/ds.md" "command"
+deploy_link "$PROJECT_ROOT/commands/ds-impl.md" \
+            "$CLAUDE_COMMANDS/ds-impl.md" "command"
 
 # ===== Step 6: 添加 pure alias 到 shell rc =====
 SHELL_RC=""

@@ -1,0 +1,12 @@
+{
+  "mode": "config_plumbing",
+  "allowed_files": ["configs/**", "scripts/**", "tests/**/*.py"],
+  "forbidden_files": [".env", ".env.*", "*.key", "*.pem", "*.token", "secrets/**", "outputs/**", "runs/**", "results/final/**"],
+  "must_not_change": [
+    "model/training logic unless explicitly listed in allowed_files",
+    "frozen experiment result files"
+  ],
+  "success_checks": ["pytest tests/"],
+  "expected_outputs": ["changed_files", "commands_run", "assumptions", "risks"],
+  "review_after": "codex-full-review"
+}

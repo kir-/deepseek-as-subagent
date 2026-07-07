@@ -17,6 +17,7 @@ fi
 echo "[2/4] 删 skill / command 部署..."
 rm -rf "$HOME/.claude/skills/delegate-to-deepseek"
 rm -f "$HOME/.claude/commands/ds.md"
+rm -f "$HOME/.claude/commands/ds-impl.md"
 
 # 3. 提示用户决定是否删配置
 echo "[3/4] 配置目录:"

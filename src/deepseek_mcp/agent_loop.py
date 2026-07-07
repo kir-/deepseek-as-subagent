@@ -12,6 +12,7 @@ from pathlib import Path
 from openai import APIConnectionError, APIError, OpenAI, RateLimitError
 
 from .config import Config
+from .contract import TaskContract, effective_allowed_tools
 from .tools import build_tool_schemas, execute_tool
 
 logger = logging.getLogger(__name__)
@@ -24,7 +25,10 @@ API_RETRY_BACKOFF_SECONDS = 2.0
 SENSITIVE_TOOL_ARG_KEYS = {"content", "new_string"}
 
 
-SYSTEM_PROMPT_TEMPLATE = """You are DeepSeek working as a sub-agent for Claude.
+SYSTEM_PROMPT_TEMPLATE = """You are DeepSeek working as a bounded implementation worker inside a larger research-agent pipeline.
+
+Claude is the planner and final judge.
+Codex will perform adversarial review after your changes.
 
 You're given a focused task to complete autonomously within a workspace.
 You have local tools: {tools}
@@ -33,14 +37,26 @@ Rules:
 1. Stay strictly within the workspace: {workspace}
 2. Read before editing. Don't guess file contents.
 3. For batch tasks (translating, extracting, refactoring many files), iterate file-by-file.
-4. When done, return a final message summarizing:
-   - What you did (file paths affected)
-   - Any issues / files you couldn't process
-   - A brief summary the parent (Claude) can use without re-reading everything
-5. Don't ask clarifying questions back to the parent. Make reasonable assumptions
+4. Do not make final research judgments.
+5. Do not claim that an experiment is valid.
+6. Do not decide whether the method is correct.
+7. Do not change the task objective, estimator, algorithm, or public behavior unless the task contract explicitly requests it.
+8. Follow the task contract strictly.
+9. Respect allowed_files, forbidden_files, must_not_change, and success_checks.
+10. If the task contract is too vague or conflicts with the requested work, stop and report the issue instead of guessing.
+11. When done, return a final message summarizing:
+   - changed files
+   - commands run
+   - checks passed/failed
+   - assumptions
+   - risks
+   - anything Codex should review carefully
+12. Don't ask clarifying questions back to the parent. Make reasonable assumptions
    and document them in your final message.
-6. If a tool returns "ERROR: ...", read the error and decide: retry with fixed input,
+13. If a tool returns "ERROR: ...", read the error and decide: retry with fixed input,
    skip the file, or report and stop. Don't blindly loop on the same error.
+
+{contract}
 """
 
 
@@ -48,7 +64,7 @@ class AgentLoopError(Exception):
     """Agent loop failed (max turns exceeded, API error, etc)."""
 
 
-def run_agent(task: str, config: Config) -> dict:
+def run_agent(task: str, config: Config, contract: TaskContract | None = None) -> dict:
     """跑完整 agent loop。
 
     返回 dict:
@@ -58,12 +74,15 @@ def run_agent(task: str, config: Config) -> dict:
       - tool_calls: int
       - duration_seconds: float
     """
+    contract = contract or TaskContract.from_dict(None)
     client = OpenAI(api_key=config.api_key, base_url=config.base_url)
-    tools = build_tool_schemas(config.allowed_tools)
+    allowed_tools = effective_allowed_tools(config.allowed_tools, contract)
+    tools = build_tool_schemas(allowed_tools)
 
     system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
-        tools=", ".join(config.allowed_tools),
+        tools=", ".join(allowed_tools),
         workspace=config.workspace,
+        contract=contract.to_prompt_text(),
     )
 
     messages: list[dict] = [
@@ -121,7 +140,7 @@ def run_agent(task: str, config: Config) -> dict:
                     tool_name,
                     _redact_args_for_log(args),
                 )
-                result = execute_tool(tool_name, args, config.workspace)
+                result = execute_tool(tool_name, args, config.workspace, contract, allowed_tools)
 
             messages.append(
                 {
