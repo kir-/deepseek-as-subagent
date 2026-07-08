@@ -70,9 +70,57 @@ cd deepseek-as-subagent
 ./install.sh
 ```
 
-Then edit `~/.deepseek-mcp/config.json` and paste your DeepSeek API key.
+Then create or edit your DeepSeek config:
+
+```bash
+mkdir -p ~/.deepseek-mcp
+chmod 700 ~/.deepseek-mcp
+nano ~/.deepseek-mcp/config.json
+```
+
+Paste this JSON, replacing the API key with your real key:
+
+```json
+{
+  "api_key": "sk-your-deepseek-key-here",
+  "model": "deepseek-v4-pro",
+  "max_turns": 50,
+  "allowed_tools": ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "NotebookEdit"]
+}
+```
+
+Lock down the file permissions:
+
+```bash
+chmod 600 ~/.deepseek-mcp/config.json
+```
 
 Get a key at https://platform.deepseek.com (CNY ¥20 lasts a long time).
+
+Verify Claude Code can see the MCP server:
+
+```bash
+claude mcp list
+```
+
+You should see a `deepseek` entry with `Connected` or `✔ Connected`.
+
+Then launch Claude from the project you want DeepSeek to work in:
+
+```bash
+cd /path/to/your/project
+claude
+```
+
+Test explicit delegation:
+
+```text
+/ds write a hello world python script to /tmp/hi.py
+```
+
+The workspace follows the directory where you launch `claude`, so running
+`claude` inside `/path/to/your/project` makes that project the sandbox DeepSeek
+can read and edit.
 
 ### Codex CLI
 
@@ -162,16 +210,29 @@ No third-party proxy. No cloud relay. Your code never leaves your laptop.
 
 ## Configuration
 
-`~/.deepseek-mcp/config.json`:
+Create `~/.deepseek-mcp/config.json` with private permissions:
+
+```bash
+mkdir -p ~/.deepseek-mcp
+chmod 700 ~/.deepseek-mcp
+nano ~/.deepseek-mcp/config.json
+chmod 600 ~/.deepseek-mcp/config.json
+```
+
+Use this shape:
 
 ```json
 {
-  "api_key": "sk-...",
+  "api_key": "sk-your-deepseek-key-here",
   "model": "deepseek-v4-pro",
   "max_turns": 50,
   "allowed_tools": ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "NotebookEdit"]
 }
 ```
+
+Do not put your API key in this repository or commit it to git. The server
+loads the key from `DEEPSEEK_API_KEY` first, then from
+`~/.deepseek-mcp/config.json`.
 
 **Workspace (sandbox root)** auto-follows the directory where you launch
 `claude` — DeepSeek shares the same scope as Claude itself, no manual config
