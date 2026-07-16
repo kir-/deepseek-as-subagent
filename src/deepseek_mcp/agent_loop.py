@@ -77,6 +77,14 @@ def run_agent(task: str, config: Config, contract: TaskContract | None = None) -
     contract = contract or TaskContract.from_dict(None)
     client = OpenAI(api_key=config.api_key, base_url=config.base_url)
     allowed_tools = effective_allowed_tools(config.allowed_tools, contract)
+    if not allowed_tools:
+        raise AgentLoopError(
+            "Resolved to zero available tools (global config allowed_tools "
+            f"{config.allowed_tools!r} ∩ mode '{contract.mode}' tools ∩ "
+            f"contract.allowed_tools {contract.allowed_tools!r}). Refusing to run "
+            "a tool-less turn — DeepSeek would otherwise free-text a fabricated "
+            "'completed' response instead of actually executing anything."
+        )
     tools = build_tool_schemas(allowed_tools)
 
     system_prompt = SYSTEM_PROMPT_TEMPLATE.format(

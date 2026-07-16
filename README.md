@@ -254,6 +254,18 @@ Supported modes are `implement`, `readonly_scan`, `test_writer`,
 `logging_diagnostics`, `config_plumbing`, and `docs`. Example contracts live in
 [`contracts/`](contracts/).
 
+If you set `contract.allowed_tools`, use the exact capitalized tool names —
+`Read, Write, Edit, Bash, Glob, Grep, NotebookEdit`. There is no fuzzy or
+case-insensitive matching. An unknown name (e.g. `read`, `bash_readonly`)
+raises `ValueError` at contract-parse time; if the three-way intersection
+above still resolves to zero tools (e.g. a `readonly_scan` mode combined with
+a `contract.allowed_tools` that only lists write tools), `delegate_to_deepseek`
+raises before calling the API — it will not silently hand DeepSeek an empty
+toolset, which previously let it free-text a plausible-looking "completed"
+summary without doing any real work. In most cases you don't need
+`allowed_tools` in the contract at all: `mode` already picks a sensible tool
+set (e.g. `readonly_scan` → `Read/Bash/Glob/Grep`, no write access).
+
 ## Uninstall
 
 ```bash

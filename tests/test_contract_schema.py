@@ -25,3 +25,14 @@ def test_forbidden_files_defaults_are_applied():
     contract = TaskContract.from_dict({"mode": "readonly_scan"})
 
     assert contract.forbidden_files == DEFAULT_FORBIDDEN_FILES
+
+
+def test_unknown_allowed_tools_name_fails_clearly():
+    with pytest.raises(ValueError, match="contract.allowed_tools"):
+        TaskContract.from_dict({"allowed_tools": ["read", "bash_readonly"]})
+
+
+def test_valid_allowed_tools_names_are_accepted():
+    contract = TaskContract.from_dict({"allowed_tools": ["Read", "Bash"]})
+
+    assert contract.allowed_tools == ["Read", "Bash"]

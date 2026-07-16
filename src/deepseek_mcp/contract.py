@@ -74,6 +74,13 @@ class TaskContract:
         success_checks = _string_list(value, "success_checks", [])
         expected_outputs = _string_list(value, "expected_outputs", [])
         allowed_tools = _optional_string_list(value, "allowed_tools")
+        if allowed_tools is not None:
+            unknown = sorted(set(allowed_tools) - set(ALL_TOOLS))
+            if unknown:
+                raise ValueError(
+                    f"contract.allowed_tools has unknown tool name(s) {unknown}. "
+                    f"Valid (case-sensitive): {ALL_TOOLS}"
+                )
 
         review_after = value.get("review_after", "codex-full-review")
         if not isinstance(review_after, str):
